@@ -4,8 +4,8 @@ Business analytics only. Vending itself runs offline on the ESP8266.
 ## Data flow
 The dashboard reads the `Daily`, `ProductDaily`, `Transactions`, `Live`, and
 `LiveProducts` tabs from a Google Sheet shared as **Anyone with the link:
-Viewer**. Add the sheet ID as `SHEET_ID` in Streamlit secrets, or enter it in
-the sidebar. Select **Sample data** to run the dashboard without a sheet.
+Viewer**. Configure the sheet ID in Streamlit secrets under
+`1YFiLW-iSre378B0dXzDpiq9sC4JhnK6KLpTkqbKxAOY`.
 
 The Apps Script backend writes finished daily totals at midnight and refreshes
 the live tabs every 10 minutes. The machine remains offline-first.

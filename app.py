@@ -34,64 +34,6 @@ def read_sheet_tab(sheet_id, tab):
     return frame.reindex(columns=SHEET_TABS[tab], fill_value=pd.NA)
 
 
-def demo_data():
-    try:
-        old = pd.read_csv("data/sample_sales.csv")
-    except (FileNotFoundError, pd.errors.ParserError):
-        old = empty_frame(["tx_no", "product", "price", "seconds_ago"])
-    now = datetime.now(IST)
-    transactions = []
-    for row in old.itertuples(index=False):
-        moment = now - timedelta(seconds=int(row.seconds_ago))
-        transactions.append(
-            {
-                "date": moment.date(),
-                "machine": "VENDORA_M001",
-                "time": moment.replace(tzinfo=None),
-                "product": row.product,
-                "amount": row.price,
-            }
-        )
-    tx = pd.DataFrame(transactions, columns=SHEET_TABS["Transactions"])
-    if tx.empty:
-        tx = empty_frame(SHEET_TABS["Transactions"])
-    today_tx = tx[tx["date"] == now.date()]
-    products = sorted(tx["product"].dropna().unique())
-    live_rows = []
-    live_product_rows = []
-    for product in products:
-        sold = int((today_tx["product"] == product).sum())
-        price = int(tx.loc[tx["product"] == product, "amount"].iloc[0])
-        live_product_rows.append(
-            {"date": now.date(), "machine": "VENDORA_M001", "product": product,
-             "price": price, "units": sold, "revenue": sold * price, "stock": max(0, 10 - sold)}
-        )
-    live = pd.DataFrame(
-        [{"updated": now.replace(tzinfo=None), "date": now.date(), "machine": "VENDORA_M001",
-          "total_sales": len(today_tx), "total_revenue": today_tx["amount"].sum()}],
-        columns=SHEET_TABS["Live"],
-    )
-    live_products = pd.DataFrame(live_product_rows, columns=SHEET_TABS["LiveProducts"])
-    daily_rows = []
-    product_daily_rows = []
-    for day, group in tx.groupby("date"):
-        daily_rows.append({"date": day, "machine": "VENDORA_M001", "total_sales": len(group),
-                           "total_revenue": group["amount"].sum()})
-        for product, product_group in group.groupby("product"):
-            price = product_group["amount"].iloc[0]
-            product_daily_rows.append(
-                {"date": day, "machine": "VENDORA_M001", "product": product, "price": price,
-                 "units": len(product_group), "revenue": product_group["amount"].sum(), "stock_end": 10}
-            )
-    return {
-        "Daily": pd.DataFrame(daily_rows, columns=SHEET_TABS["Daily"]),
-        "ProductDaily": pd.DataFrame(product_daily_rows, columns=SHEET_TABS["ProductDaily"]),
-        "Transactions": tx,
-        "Live": live,
-        "LiveProducts": live_products,
-    }
-
-
 def normalize(data):
     for name in ("Daily", "ProductDaily", "Live", "LiveProducts"):
         data[name]["date"] = pd.to_datetime(data[name]["date"], errors="coerce").dt.date
@@ -106,16 +48,8 @@ def normalize(data):
     return data
 
 
-def get_sheet_id():
-    try:
-        configured = st.secrets.get("SHEET_ID", "")
-    except (FileNotFoundError, KeyError):
-        configured = ""
-    return st.sidebar.text_input("Google Sheet ID", value=configured, type="password")
-
-
-def show_empty(message):
-    st.info(message)
+def show_empty():
+    st.info("Waiting for machine data")
 
 
 def machine_options(*frames):
@@ -126,15 +60,13 @@ def machine_options(*frames):
     return sorted(values)
 
 
-st.sidebar.header("Data source")
-source = st.sidebar.radio("Load data from", ["Sample data", "Google Sheet"])
-if source == "Sample data":
-    data = demo_data()
-else:
-    sheet_id = get_sheet_id()
-    data = {tab: read_sheet_tab(sheet_id, tab) for tab in SHEET_TABS} if sheet_id else {
-        tab: empty_frame(columns) for tab, columns in SHEET_TABS.items()
-    }
+try:
+    sheet_id = st.secrets["1YFiLW-iSre378B0dXzDpiq9sC4JhnK6KLpTkqbKxAOY"]
+except (FileNotFoundError, KeyError):
+    sheet_id = ""
+data = {tab: read_sheet_tab(sheet_id, tab) for tab in SHEET_TABS} if sheet_id else {
+    tab: empty_frame(columns) for tab, columns in SHEET_TABS.items()
+}
 data = normalize(data)
 
 today = datetime.now(IST).date()
@@ -146,7 +78,7 @@ with today_tab:
     live = data["Live"]
     live_products = data["LiveProducts"]
     if live.empty:
-        show_empty("No live data is available yet.")
+        show_empty()
     else:
         latest = live.sort_values("updated").iloc[-1]
         sales = int(latest["total_sales"])
@@ -186,7 +118,7 @@ with history_tab:
         daily = pd.concat([daily, live_rows[daily.columns]], ignore_index=True)
         daily = daily.sort_values("date").drop_duplicates(["date", "machine"], keep="last")
     if daily.empty:
-        show_empty("No daily history is available yet.")
+        show_empty()
     else:
         machines = machine_options(daily)
         selected_machine = st.selectbox("Machine", ["All"] + machines)
@@ -200,7 +132,7 @@ with history_tab:
         if selected_machine != "All":
             filtered = filtered[filtered["machine"] == selected_machine]
         if filtered.empty:
-            show_empty("No data matches those filters.")
+            st.info("No data matches those filters.")
         else:
             d1, d2 = st.columns(2)
             d1.plotly_chart(px.line(filtered, x="date", y="total_revenue", markers=True,
@@ -238,7 +170,7 @@ with history_tab:
 with hourly_tab:
     tx = data["Transactions"]
     if tx.empty or tx["time"].isna().all():
-        show_empty("No transaction timestamps are available yet.")
+        show_empty()
     else:
         tx = tx.dropna(subset=["time"]).copy()
         tx["weekday"] = tx["time"].dt.day_name()
@@ -258,7 +190,7 @@ with restock_tab:
     product_daily = data["ProductDaily"]
     live_products = data["LiveProducts"]
     if product_daily.empty or live_products.empty:
-        show_empty("Product history and live stock are needed for the restock planner.")
+        show_empty()
     else:
         recent_start = today - timedelta(days=6)
         recent = product_daily[product_daily["date"] >= recent_start]
@@ -276,7 +208,7 @@ with data_tab:
     for tab_name, frame in data.items():
         with st.expander(tab_name, expanded=tab_name == "Live"):
             if frame.empty:
-                st.info(f"{tab_name} is empty or unavailable.")
+                st.info("Waiting for machine data")
             else:
                 st.dataframe(frame, use_container_width=True, hide_index=True)
                 st.download_button(
