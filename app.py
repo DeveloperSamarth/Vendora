@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from urllib.error import URLError
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -29,9 +30,9 @@ def read_sheet_tab(sheet_id, tab):
     url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq?tqx=out:csv&sheet={tab}"
     try:
         frame = pd.read_csv(url)
-    except (OSError, ValueError, pd.errors.ParserError):
-        return empty_frame(SHEET_TABS[tab])
-    return frame.reindex(columns=SHEET_TABS[tab], fill_value=pd.NA)
+    except (OSError, ValueError, pd.errors.ParserError, URLError) as error:
+        return empty_frame(SHEET_TABS[tab]), url, error
+    return frame.reindex(columns=SHEET_TABS[tab], fill_value=pd.NA), url, None
 
 
 def normalize(data):
@@ -64,9 +65,12 @@ try:
     sheet_id = st.secrets["1YFiLW-iSre378B0dXzDpiq9sC4JhnK6KLpTkqbKxAOY"]
 except (FileNotFoundError, KeyError):
     sheet_id = ""
-data = {tab: read_sheet_tab(sheet_id, tab) for tab in SHEET_TABS} if sheet_id else {
-    tab: empty_frame(columns) for tab, columns in SHEET_TABS.items()
+sheet_results = {tab: read_sheet_tab(sheet_id, tab) for tab in SHEET_TABS} if sheet_id else {
+    tab: (empty_frame(columns), None, None) for tab, columns in SHEET_TABS.items()
 }
+data = {tab: result[0] for tab, result in sheet_results.items()}
+sheet_urls = {tab: result[1] for tab, result in sheet_results.items()}
+sheet_errors = {tab: result[2] for tab, result in sheet_results.items()}
 data = normalize(data)
 
 today = datetime.now(IST).date()
@@ -205,12 +209,19 @@ with restock_tab:
         st.dataframe(plan.sort_values("days_of_stock_left"), use_container_width=True, hide_index=True)
 
 with data_tab:
-    for tab_name, frame in data.items():
+    for tab_name in ("Live", "LiveProducts", "Daily", "ProductDaily", "Transactions"):
+        frame = data[tab_name]
         with st.expander(tab_name, expanded=tab_name == "Live"):
+            if sheet_errors[tab_name] is not None:
+                st.error(f"{tab_name}: {sheet_errors[tab_name]}")
+            if sheet_urls[tab_name]:
+                st.code(sheet_urls[tab_name], language="text")
+            st.write(f"Rows: {len(frame)}")
+            st.write(f"Columns: {', '.join(frame.columns) if len(frame.columns) else 'none'}")
             if frame.empty:
-                st.info("Waiting for machine data")
+                st.info("empty")
             else:
-                st.dataframe(frame, use_container_width=True, hide_index=True)
+                st.dataframe(frame.head(5), use_container_width=True, hide_index=True)
                 st.download_button(
                     f"Download {tab_name}.csv", frame.to_csv(index=False), f"vendora_{tab_name.lower()}.csv",
                     mime="text/csv", key=f"download_{tab_name}",
