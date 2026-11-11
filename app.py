@@ -148,6 +148,18 @@ for frame in (daily, prodaily):
     if "date" in frame.columns:
         frame["date"] = to_dt(frame["date"])
 
+# totals are cumulative within a day, so the row with the most sales is the latest snapshot
+if not daily.empty and {"date", "machine"} <= set(daily.columns):
+    daily = (
+        daily.sort_values("total_sales")
+        .drop_duplicates(subset=["date", "machine"], keep="last")
+    )
+if not prodaily.empty and {"date", "machine", "product"} <= set(prodaily.columns):
+    prodaily = (
+        prodaily.sort_values(["units", "revenue"])
+        .drop_duplicates(subset=["date", "machine", "product"], keep="last")
+    )
+
 # Daily totals across machines, one row per date. Today's row is a running total.
 if not daily.empty and "date" in daily.columns:
     daily_totals = (
