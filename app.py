@@ -8,8 +8,62 @@ import streamlit as st
 
 st.set_page_config(page_title="VENDORA", page_icon="🥤", layout="centered")
 st.markdown(
-    "<style>.block-container{padding-top:2rem;max-width:860px}"
-    "div[data-testid='stMetricValue']{font-size:1.7rem}</style>",
+    """
+    <style>
+    :root {
+      --navy: #0f2441;
+      --blue: #2a78d6;
+      --green: #1a9e6a;
+      --amber: #eda100;
+      --red: #e34948;
+      --card: rgba(255,255,255,.92);
+      --ink: #172235;
+      --muted: #68758a;
+      --line: rgba(104,117,138,.18);
+    }
+    .block-container { max-width: 860px; padding-top: 1.5rem; }
+    .vendora-hero {
+      align-items: center; background: var(--navy); border-radius: 16px;
+      box-shadow: 0 12px 30px rgba(15,36,65,.2); display: flex;
+      justify-content: space-between; margin-bottom: 1.25rem; padding: 1rem 1.2rem;
+    }
+    .vendora-title { color: white; font-size: 1.8rem; font-weight: 800; letter-spacing: .08em; }
+    .status-chip { align-items: center; border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px; color: white; display: flex; font-size: .78rem;
+      gap: .45rem; padding: .35rem .7rem; }
+    .status-dot { background: var(--amber); border-radius: 50%; height: 8px; width: 8px; }
+    .status-live .status-dot { animation: pulse 2s infinite; background: var(--green); }
+    .headline, .metric-card, .attention-box { animation: slide-up .55s both; }
+    .metric-card { background: var(--card); border-radius: 14px; box-shadow: 0 5px 18px rgba(15,36,65,.1);
+      color: var(--ink); min-height: 82px; padding: .85rem 1rem; transition: transform .2s, box-shadow .2s; }
+    .metric-grid { display: grid; gap: .75rem; grid-template-columns: repeat(3, 1fr); margin: .9rem 0 1rem; }
+    .metric-card:hover { box-shadow: 0 9px 24px rgba(15,36,65,.16); transform: translateY(-2px); }
+    .metric-card:nth-child(1) { border-top: 4px solid var(--blue); }
+    .metric-card:nth-child(2) { border-top: 4px solid var(--green); }
+    .metric-card:nth-child(3) { border-top: 4px solid var(--amber); }
+    .metric-label { color: var(--muted); font-size: .78rem; font-weight: 700; }
+    .metric-value { font-size: 1.7rem; font-weight: 800; margin-top: .25rem; }
+    .attention-box { border-radius: 14px; margin: 1rem 0; padding: .85rem 1rem; }
+    .attention-urgent { background: rgba(227,73,72,.12); border: 1px solid rgba(227,73,72,.3); }
+    .attention-watch { background: rgba(237,161,0,.13); border: 1px solid rgba(237,161,0,.35); }
+    .attention-good { background: rgba(26,158,106,.12); border: 1px solid rgba(26,158,106,.3); }
+    [data-testid="stProgress"] > div > div > div { background: var(--blue); transition: width .7s ease; }
+    @keyframes slide-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(26,158,106,.65); } 50% { box-shadow: 0 0 0 5px rgba(26,158,106,0); } }
+    @media (max-width: 640px) {
+      .vendora-hero { padding: .85rem 1rem; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .metric-card { margin-bottom: .65rem; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --card: rgba(30,43,61,.96); --ink: #edf3fb; --muted: #aebbd0; --line: rgba(237,243,251,.16); }
+      .metric-card { box-shadow: 0 5px 18px rgba(0,0,0,.24); }
+    }
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -78,12 +132,6 @@ def hour_label(hour):
 live, liveprod = get("Live"), get("LiveProducts")
 daily, prodaily = get("Daily"), get("ProductDaily")
 tx_done, tx_today = get("Transactions"), get("TodayTransactions")
-
-top = st.columns([5, 1], vertical_alignment="center")
-top[0].title("VENDORA")
-if top[1].button("Refresh", help="Reload the latest data from the machine"):
-    st.cache_data.clear()
-    st.rerun()
 
 if not SID:
     st.warning(
@@ -172,6 +220,7 @@ def style(fig, height=260):
         paper_bgcolor="rgba(0,0,0,0)",
         bargap=0.35,
         font=dict(size=13),
+        transition={"duration": 600, "easing": "cubic-in-out"},
     )
     fig.update_xaxes(showgrid=False, zeroline=False, title=None)
     fig.update_yaxes(gridcolor="rgba(128,128,128,0.18)", zeroline=False, title=None)
@@ -196,6 +245,10 @@ def hourly_chart(frame, key):
             x=[hour_label(hour) for hour in hours],
             y=values,
             marker_color=[BLUE if hour == peak else BLUE_LIGHT for hour in hours],
+            marker_line=dict(
+                color=[BLUE if hour == peak else "rgba(42,120,214,.35)" for hour in hours],
+                width=[3 if hour == peak else 1 for hour in hours],
+            ),
             hovertemplate="%{x}: %{y} sales<extra></extra>",
         )
     )
@@ -206,12 +259,20 @@ def hourly_chart(frame, key):
 
 def ranking_chart(frame, value, label_format, key, height=None):
     data = frame.sort_values(value, ascending=True)
+    if "stock" in data.columns:
+        outline = [
+            "#e34948" if stock <= 2 else "#eda100" if stock <= 5 else "#1a9e6a"
+            for stock in data["stock"]
+        ]
+    else:
+        outline = ["#1a9e6a"] * len(data)
     fig = go.Figure(
         go.Bar(
             x=data[value],
             y=data["product"],
             orientation="h",
             marker_color=BLUE,
+            marker_line=dict(color=outline, width=2),
             text=[label_format(row) for _, row in data.iterrows()],
             textposition="outside",
             cliponaxis=False,
@@ -238,6 +299,58 @@ def freshness():
     if 15 < minutes < 24 * 60:
         return f"🟠 No update for {int(minutes)} min (machine may be offline) · last at {stamp}"
     return f"Last update: {stamp}"
+
+
+status_live = False
+if not live.empty and "updated" in live.columns:
+    update_times = to_dt(live["updated"]).dropna()
+    if not update_times.empty:
+        status_live = (
+            datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+            - update_times.iloc[0].to_pydatetime()
+        ).total_seconds() <= 15 * 60
+
+status_class = "status-live" if status_live else "status-stale"
+status_label = "Live" if status_live else "No update"
+st.markdown(
+    f"<div class='vendora-hero'><div class='vendora-title'>VENDORA</div>"
+    f"<div class='status-chip {status_class}'><span class='status-dot'></span>{status_label}</div></div>",
+    unsafe_allow_html=True,
+)
+if st.button("Refresh", help="Reload the latest data from the machine"):
+    st.cache_data.clear()
+    st.rerun()
+
+
+def metric_cards(items):
+    cards = "".join(
+        f"<div class='metric-card' style='animation-delay:{index * .08:.2f}s'>"
+        f"<div class='metric-label'>{label}</div><div class='metric-value'>{value}</div></div>"
+        for index, (label, value) in enumerate(items)
+    )
+    st.markdown(f"<div class='metric-grid'>{cards}</div>", unsafe_allow_html=True)
+
+
+def attention_box(alerts):
+    if not alerts:
+        tone, content = "attention-good", "✅ Nothing to do right now."
+    elif alerts[0][0] == 0:
+        tone = "attention-urgent"
+        content = "<br>".join(
+            text.replace("**", "<strong>", 1).replace("**", "</strong>", 1)
+            for _, text in alerts
+        )
+    else:
+        tone = "attention-watch"
+        content = "<br>".join(
+            text.replace("**", "<strong>", 1).replace("**", "</strong>", 1)
+            for _, text in alerts
+        )
+    st.markdown(
+        f"<div class='attention-box {tone}'><strong>Needs attention</strong>"
+        f"<div style='margin-top:.45rem'>{content}</div></div>",
+        unsafe_allow_html=True,
+    )
 
 
 tab_today, tab_trends, tab_day = st.tabs(["Today", "Trends", "Day report"])
@@ -288,22 +401,18 @@ with tab_today:
             if alerts
             else " Stock looks fine."
         )
-        st.markdown(line)
+        st.markdown(f"<div class='headline'>{line}</div>", unsafe_allow_html=True)
         if typical:
             st.progress(min(revenue / typical, 1.0))
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Revenue", money(revenue))
-        c2.metric("Sales", sales)
-        c3.metric("Average order", money(revenue / sales) if sales else "–")
-
-        with st.container(border=True):
-            st.markdown("**Needs attention**")
-            if alerts:
-                for _, text in alerts:
-                    st.markdown(text)
-            else:
-                st.markdown("✅ Nothing to do right now.")
+        metric_cards(
+            [
+                ("Revenue", money(revenue)),
+                ("Sales", sales),
+                ("Average order", money(revenue / sales) if sales else "–"),
+            ]
+        )
+        attention_box(alerts)
 
         if today:
             st.markdown("**When are people buying today?**")
@@ -312,8 +421,11 @@ with tab_today:
                 st.caption(f"Busiest so far: {hour_label(peak)}.")
         if not liveprod.empty and liveprod["units"].sum() > 0:
             st.markdown("**What is selling?**")
+            ranking_frame = liveprod[["product", "units"]].copy()
+            if "stock" in liveprod.columns:
+                ranking_frame["stock"] = liveprod["stock"]
             ranking_chart(
-                liveprod[["product", "units"]],
+                ranking_frame,
                 "units",
                 lambda row: f"{int(row['units'])}",
                 "today_products",
@@ -390,11 +502,19 @@ with tab_trends:
             BLUE_LIGHT if (today and view == "Daily" and date.date() == today) else BLUE
             for date in series["date"]
         ]
+        highest_index = series["revenue"].idxmax()
         fig = go.Figure(
             go.Bar(
                 x=series["date"],
                 y=series["revenue"],
                 marker_color=colors,
+                marker_line=dict(
+                    color=[
+                        "rgba(42,120,214,.9)" if index == highest_index else "rgba(42,120,214,.3)"
+                        for index in series.index
+                    ],
+                    width=[3 if index == highest_index else 1 for index in series.index],
+                ),
                 hovertemplate="%{x|%a %d %b}: ₹%{y:,.0f}<extra></extra>",
             )
         )
@@ -470,16 +590,13 @@ with tab_day:
             summary += f" (a typical day is {money(typical)})." if typical else "."
         st.markdown(summary)
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric(
-            "Revenue",
-            money(revenue),
-            None
-            if previous_row is None
-            else money(revenue - int(previous_row["revenue"])).replace("₹-", "-₹"),
+        metric_cards(
+            [
+                ("Revenue", money(revenue)),
+                ("Sales", sales),
+                ("Average order", money(revenue / sales) if sales else "–"),
+            ]
         )
-        c2.metric("Sales", sales, None if previous_row is None else sales - int(previous_row["sales"]))
-        c3.metric("Average order", money(revenue / sales) if sales else "–")
 
         product_day = (
             prodaily[prodaily["date"].dt.date == day]
