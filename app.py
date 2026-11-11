@@ -284,6 +284,108 @@ def ranking_chart(frame, value, label_format, key, height=None):
     show(style(fig, height or max(150, 52 * len(data))), key)
 
 
+def sales_revenue_chart(frame, key):
+    if frame.empty:
+        return
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=frame["date"],
+            y=frame["revenue"],
+            mode="lines+markers",
+            name="Revenue",
+            line=dict(color=BLUE, width=3),
+            marker=dict(color=BLUE, size=7),
+            hovertemplate="%{x|%a %d %b}: ₹%{y:,.0f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=frame["date"],
+            y=frame["sales"],
+            mode="lines+markers",
+            name="Sales",
+            yaxis="y2",
+            line=dict(color="#1a9e6a", width=2),
+            marker=dict(color="#1a9e6a", size=6),
+            hovertemplate="%{x|%a %d %b}: %{y} sales<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        yaxis=dict(title="Revenue (₹)", showgrid=True, gridcolor="rgba(128,128,128,.18)"),
+        yaxis2=dict(title="Sales", overlaying="y", side="right", showgrid=False),
+        legend=dict(orientation="h", y=1.12, x=0),
+    )
+    styled = style(fig, 280)
+    styled.update_layout(showlegend=True)
+    show(styled, key)
+
+
+def weekday_chart(frame, key):
+    if frame.empty:
+        return
+    order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    grouped = (
+        frame.assign(weekday=frame["date"].dt.day_name())
+        .groupby("weekday")["revenue"]
+        .mean()
+        .reindex(order)
+        .dropna()
+        .reset_index()
+    )
+    if grouped.empty:
+        return
+    best = grouped["revenue"].idxmax()
+    fig = go.Figure(
+        go.Bar(
+            x=grouped["weekday"],
+            y=grouped["revenue"],
+            marker_color=[("#1a9e6a" if index == best else BLUE) for index in grouped.index],
+            hovertemplate="%{x}: ₹%{y:,.0f} average<extra></extra>",
+        )
+    )
+    show(style(fig, 240), key)
+
+
+def inventory_chart(frame, key):
+    if frame.empty or "product" not in frame.columns or "stock" not in frame.columns:
+        return
+    data = frame.sort_values("stock", ascending=True)
+    colors = [
+        "#e34948" if stock <= 2 else "#eda100" if stock <= 5 else "#1a9e6a"
+        for stock in data["stock"]
+    ]
+    fig = go.Figure(
+        go.Bar(
+            x=data["stock"],
+            y=data["product"],
+            orientation="h",
+            marker_color=colors,
+            hovertemplate="%{y}: %{x} units remaining<extra></extra>",
+        )
+    )
+    fig.update_xaxes(dtick=1)
+    show(style(fig, max(150, 48 * len(data))), key)
+
+
+def product_mix_chart(frame, key):
+    if frame.empty or frame["revenue"].sum() <= 0:
+        return
+    data = frame.groupby("product", as_index=False)["revenue"].sum()
+    fig = go.Figure(
+        go.Pie(
+            labels=data["product"],
+            values=data["revenue"],
+            hole=0.58,
+            textinfo="label+percent",
+            hovertemplate="%{label}: ₹%{value:,.0f} (%{percent})<extra></extra>",
+            marker=dict(colors=[BLUE, "#1a9e6a", "#eda100", "#e34948"]),
+        )
+    )
+    fig.update_layout(showlegend=False)
+    show(style(fig, 280), key)
+
+
 def freshness():
     if live.empty or "updated" not in live.columns:
         return "No update received yet"
@@ -424,12 +526,17 @@ with tab_today:
             ranking_frame = liveprod[["product", "units"]].copy()
             if "stock" in liveprod.columns:
                 ranking_frame["stock"] = liveprod["stock"]
-            ranking_chart(
-                ranking_frame,
-                "units",
-                lambda row: f"{int(row['units'])}",
-                "today_products",
-            )
+            products_left, stock_left = st.columns(2)
+            with products_left:
+                ranking_chart(
+                    ranking_frame,
+                    "units",
+                    lambda row: f"{int(row['units'])}",
+                    "today_products",
+                )
+            with stock_left:
+                st.markdown("**Stock remaining**")
+                inventory_chart(liveprod, "today_stock")
 
 # ================================================================== TRENDS
 with tab_trends:
@@ -538,6 +645,12 @@ with tab_trends:
         if view == "Daily" and today and today in set(series["date"].dt.date):
             st.caption("Lighter bar = today so far. Grey line = 7-day average.")
 
+        st.markdown("**Sales and revenue together**")
+        sales_revenue_chart(series, "trend_sales_revenue")
+        if len(history) >= 3:
+            st.markdown("**Average revenue by weekday**")
+            weekday_chart(history, "trend_weekdays")
+
         if not prodaily.empty and "product" in prodaily.columns:
             product_totals = (
                 prodaily[prodaily["date"] >= since]
@@ -631,6 +744,8 @@ with tab_day:
                     ),
                 },
             )
+            st.markdown("**Revenue mix**")
+            product_mix_chart(product_day, "day_product_mix")
 
         st.markdown("**When did people buy?**")
         peak = hourly_chart(transaction_hours, "day_hours")
