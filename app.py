@@ -1,13 +1,14 @@
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from pandas.errors import EmptyDataError
 
 
 st.set_page_config(page_title="VENDORA Analytics", page_icon="🥤", layout="wide")
 st.title("VENDORA Business Analytics")
 st.caption("Cloud data updates about every minute and right after each sale. History is finalized at midnight (India time).")
 
-TABS = ["Live", "LiveProducts", "Daily", "ProductDaily", "Transactions"]
+TABS = ["Live", "LiveProducts", "Daily", "ProductDaily", "Transactions", "TodayTransactions"]
 
 
 def get_sheet_id():
@@ -35,7 +36,10 @@ def url_for(tab):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch(sid, tab):
-    df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={tab}")
+    try:
+        df = pd.read_csv(f"https://docs.google.com/spreadsheets/d/{sid}/gviz/tq?tqx=out:csv&sheet={tab}")
+    except EmptyDataError:
+        return pd.DataFrame()
     df.columns = [str(column).strip().lower() for column in df.columns]
     return df
 
@@ -72,6 +76,7 @@ liveprod = get("LiveProducts")
 daily = get("Daily")
 prodaily = get("ProductDaily")
 tx = get("Transactions")
+tday = get("TodayTransactions")
 
 if not SID:
     st.warning("Add SHEET_ID in Streamlit Secrets (or type it in the sidebar) to connect your Google Sheet.")
@@ -91,8 +96,8 @@ if "date" in daily.columns:
 if "date" in prodaily.columns:
     prodaily["date"] = to_dt(prodaily["date"])
 
-t_today, t_hist, t_hour, t_restock, t_data = st.tabs(
-    ["Today", "History", "Hourly patterns", "Restock planner", "Data"]
+t_today, t_day, t_hist, t_hour, t_restock, t_data = st.tabs(
+    ["Today", "Day report", "History", "Hourly patterns", "Restock planner", "Data"]
 )
 
 with t_today:
@@ -122,6 +127,91 @@ with t_today:
             )
             st.subheader("Stock")
             st.dataframe(show, width="stretch", hide_index=True)
+
+def transactions_for(day):
+    for source in (tx, tday):
+        if not source.empty and "date" in source.columns:
+            dates = to_dt(source["date"]).dt.date
+            matches = source[dates == day]
+            if not matches.empty:
+                return matches.copy()
+    return pd.DataFrame()
+
+
+with t_day:
+    if daily.empty or "date" not in daily.columns or daily["date"].dropna().empty:
+        st.info("No days recorded yet.")
+    else:
+        days = sorted({value.date() for value in daily["date"].dropna()}, reverse=True)
+        day = st.selectbox("Choose a day", days, format_func=lambda value: value.strftime("%A, %d %b %Y"))
+        day_rows = daily[daily["date"].dt.date == day]
+        sales, revenue = int(day_rows["total_sales"].sum()), int(day_rows["total_revenue"].sum())
+        previous_days = [value for value in days if value < day]
+        previous_sales = previous_revenue = None
+        if previous_days:
+            previous_rows = daily[daily["date"].dt.date == previous_days[0]]
+            previous_sales = int(previous_rows["total_sales"].sum())
+            previous_revenue = int(previous_rows["total_revenue"].sum())
+        transactions = transactions_for(day)
+        peak_text = "n/a"
+        if not transactions.empty and "time" in transactions.columns:
+            timed = transactions.copy()
+            timed["time"] = to_dt(timed["time"])
+            timed = timed.dropna(subset=["time"])
+            if not timed.empty:
+                peak_text = f"{int(timed['time'].dt.hour.value_counts().idxmax())}:00"
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total sales", sales, None if previous_sales is None else sales - previous_sales)
+        c2.metric("Revenue (Rs)", revenue, None if previous_revenue is None else revenue - previous_revenue)
+        c3.metric("Average order (Rs)", round(revenue / sales, 1) if sales else 0)
+        c4.metric("Peak hour", peak_text)
+        if previous_days:
+            st.caption(f"Change shown is versus the previous recorded day ({previous_days[0].strftime('%d %b')}).")
+
+        product_rows = prodaily[prodaily["date"].dt.date == day] if "date" in prodaily.columns else pd.DataFrame()
+        if not product_rows.empty and "product" in product_rows.columns:
+            st.subheader("Products")
+            products = product_rows.groupby("product")[["units", "revenue"]].sum().reset_index()
+            products["share_%"] = (
+                (products["revenue"] / products["revenue"].sum() * 100).round(1)
+                if products["revenue"].sum()
+                else 0
+            )
+            stock_end = product_rows.groupby("product")["stock_end"].last().reset_index()
+            products = products.merge(stock_end, on="product").sort_values("units", ascending=False)
+            a, b = st.columns(2)
+            a.dataframe(products, width="stretch", hide_index=True)
+            b.plotly_chart(px.bar(products, x="product", y="units", text="units", title="Units sold"), width="stretch")
+            if products["units"].sum() > 0:
+                st.write(f"**Best seller:** {products.iloc[0]['product']} | **Slowest:** {products.iloc[-1]['product']}")
+
+        st.subheader("Sales by hour")
+        if transactions.empty or "time" not in transactions.columns:
+            st.info("No individual sales are available for this day.")
+        else:
+            timed = transactions.copy()
+            timed["time"] = to_dt(timed["time"])
+            timed = timed.dropna(subset=["time"])
+            if timed.empty:
+                st.info("Sales for this day have no time recorded.")
+            else:
+                timed["hour"] = timed["time"].dt.hour
+                timed["amount"] = pd.to_numeric(timed["amount"], errors="coerce").fillna(0)
+                hourly = (
+                    timed.groupby("hour")
+                    .agg(sales=("amount", "size"), revenue=("amount", "sum"))
+                    .reindex(range(24), fill_value=0)
+                    .reset_index()
+                )
+                st.plotly_chart(px.bar(hourly, x="hour", y="sales", title="Sales per hour (0-23)"), width="stretch")
+                timed = timed.sort_values("time")
+                timed["running_revenue"] = timed["amount"].cumsum()
+                st.plotly_chart(px.line(timed, x="time", y="running_revenue", title="Revenue through the day"), width="stretch")
+            if len(transactions) < sales:
+                st.caption(f"Detail lists {len(transactions)} of {sales} sales; totals above are complete.")
+            st.subheader("All transactions")
+            st.dataframe(transactions, width="stretch", hide_index=True)
+            st.download_button("Download this day (CSV)", transactions.to_csv(index=False), f"vendora_{day}.csv")
 
 with t_hist:
     if daily.empty or "date" not in daily.columns:
@@ -240,7 +330,7 @@ with t_restock:
 
 with t_data:
     st.write("Sheet tabs read by this dashboard:")
-    for tab, df in zip(TABS, [live, liveprod, daily, prodaily, tx]):
+    for tab, df in zip(TABS, [live, liveprod, daily, prodaily, tx, tday]):
         with st.expander(f"{tab} ({len(df)} rows)"):
             st.code(url_for(tab), language="text")
             if tab in errors:

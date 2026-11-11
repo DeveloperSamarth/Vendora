@@ -9,6 +9,8 @@ Viewer**. Configure the sheet ID in Streamlit secrets under
 
 The Apps Script backend writes finished daily totals at midnight and refreshes
 the live tabs every 10 minutes. The machine remains offline-first.
+The transaction tabs may be empty before the first sale or before a day closes;
+the dashboard treats those tabs as having no transaction details yet.
 
 ## Run locally
 pip install -r requirements.txt
